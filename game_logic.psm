@@ -1,0 +1,1785 @@
+; ---------------------------------------------------------------------------------------------------
+; Game_Logic.psm - Program to implement the checkers game logic and rules for ECE 540 Final Project
+;
+; Version:	1.0
+; Author:	Aanchal Chobisa, Bhaskar Venkataramaiah & Srivatsa Yogendra
+; Date:		12-May-2016
+;
+; Revision History
+; ================
+; 12-May-16		AC,BV & SY		Created the first version
+;
+; Description:
+; ============
+; This program is used to implement the checkers game for the final project. It reads the input value and sends the 
+; location of the cursor to be displayed. Then when the player chooses the icon he wants to move, the programs goes into 
+; the game functions and shows the valid and available moves. The player can shift between the available moves by rotating 
+; the rotary encoder. Then when the player has decided where to make his move, he can place the icon back by pressing the 
+; rotary encoder button indicating that he has chosen his move. The program will then display the icons in the appropriate 
+; location and also update its memory to the new position of the icon.
+; ------------------------------------------------------------------------------------------------------
+
+; ============================================
+; === Register Names                       ===
+; === s0 - sB registers are not dedicated  ===
+; === and keep their default names         ===
+; ============================================
+NAMEREG		sF,		LocX			; Cursor location - x coordinate
+NAMEREG		sE,		LocY			; Cursor location - y coordinate
+NAMEREG		sD,		IconState		; Icon State value
+NAMEREG		sC,		Rotary_Value	; input value to move the cursor on the screen
+
+
+; ======================
+; === Port Addresses ===
+; ======================
+
+; Nexys 4 board base I/O interface ports 
+;  Port Addresses
+
+CONSTANT	PA_ENC1,			00		; (i) Rotary encoder of player 1
+CONSTANT	PA_ENC2,			01		; (i) Rotary encoder of player 2
+CONSTANT 	PA_RAND, 			20		; (i) The Random INPUT FOR 1 PLAYER MODE
+
+CONSTANT	PA_ICONSTATE,		03		; (o) Icon display state
+CONSTANT	PA_LOCX_CURSOR,		05		; (o) X-Location of the icon
+CONSTANT	PA_LOCY_CURSOR,		06		; (o) Y-Location of the icon
+CONSTANT	PA_LED_15_08,		07		; (o) On board LED[15:8]
+CONSTANT	PA_LED_07_00,		08		; (o) On board LED[7:0]
+CONSTANT	PA_LOCX_STATE,		09		; (o) X-cordinate of the state to be updated
+CONSTANT	PA_LOCY_STATE,		0A		; (o) Y-cordinate of the state to be updated
+CONSTANT	PA_UPDATE_STATE,	0B		; (o) The State Update value
+CONSTANT	PA_WEA_STATE,		0C		; (o) The State Update write enable signal to the RAM
+CONSTANT	PA_DIG0,			0D		; (o) digit 0 port address
+CONSTANT	PA_DIG1,			0E		; (o) digit 1 port address
+CONSTANT	PA_DIG2,			0F		; (o) digit 2 port address
+CONSTANT	PA_DIG3,			10		; (o) digit 3 port address
+CONSTANT	PA_DIG4,			11		; (o) digit 4 port address
+CONSTANT	PA_DIG5,			12		; (o) digit 5 port address
+CONSTANT	PA_DIG6,			13		; (o) digit 6 port address
+CONSTANT	PA_DIG7,			14		; (o) digit 7 port address
+CONSTANT 	PA_DP, 				15 		; (o) decimal points port address
+CONSTANT  	PA_P1_WON,			16		; (o) The player 1 victory signal
+CONSTANT  	PA_P2_WON,			17		; (o) The player 2 victory signal    
+      
+
+
+
+; =============================
+; === Useful Data Constants ===
+; =============================
+
+;  Constants for True and False and Null
+CONSTANT	FALSE,			04			
+CONSTANT	TRUE,			01
+CONSTANT	NULL,			00
+
+
+; =============================
+; === Mask Values ===
+; =============================
+CONSTANT	MSK_ENC_POSITION,	07		; Mask to extract the encoder count value
+CONSTANT	MSK_ENC_BUTTON,		08		; Mask to extract the encoder button value
+CONSTANT	MSK_ENC_EVENT,		10		; Mask to extract the encoder even value
+CONSTANT	MSK_KING_P,			80		; Mask to extract the information if the icon is a King
+CONSTANT	MSK_LOCY,			7F		; Mask to extract the information of the Location Y of the icon
+
+
+
+; =================================
+; === Scratch Pad RAM Variables ===
+; =================================
+
+; Initial icon x AND y location in the start of the game lookup table.
+CONSTANT	SP_LocxVal_P1,	00			; table is based at 0x00 and the X-cordinates of the player 1 icons
+
+
+CONSTANT	SP_P1X0,		0E										
+CONSTANT	SP_P1X1,		2A		
+CONSTANT	SP_P1X2,		46		
+CONSTANT	SP_P1X3,		62		
+CONSTANT	SP_P1X4,		00		
+CONSTANT	SP_P1X5,		1C		
+CONSTANT	SP_P1X6,		38		
+CONSTANT	SP_P1X7,		54		
+
+CONSTANT	SP_LocxVal_P2,	09			; table is based at 0x09 and the X-cordinates of the player 2 icons	
+CONSTANT	SP_P2X0,		54		
+CONSTANT	SP_P2X1,		38		
+CONSTANT	SP_P2X2,		1C		
+CONSTANT	SP_P2X3,		00		
+CONSTANT	SP_P2X4,		62		
+CONSTANT	SP_P2X5,		46		
+CONSTANT	SP_P2X6,		2A		
+CONSTANT	SP_P2X7,		0E		
+
+	
+CONSTANT	SP_LocyVal_P1,	20			; table is based at 0x20 and the Y-cordinates of the player 1 icons
+CONSTANT	SP_P1Y0,		00										
+CONSTANT	SP_P1Y1,		00		
+CONSTANT	SP_P1Y2,		00		
+CONSTANT	SP_P1Y3,		00		
+CONSTANT	SP_P1Y4,		0E		
+CONSTANT	SP_P1Y5,		0E		
+CONSTANT	SP_P1Y6,		0E		
+CONSTANT	SP_P1Y7,		0E		
+
+CONSTANT	SP_LocyVal_P2,	29			; table is based at 0x29 and the Y-cordinates of the player 2 icons	
+CONSTANT	SP_P2Y0,		62		
+CONSTANT	SP_P2Y1,		62		
+CONSTANT	SP_P2Y2,		62		
+CONSTANT	SP_P2Y3,		62		
+CONSTANT	SP_P2Y4,		54		
+CONSTANT	SP_P2Y5,		54		
+CONSTANT	SP_P2Y6,		54		
+CONSTANT	SP_P2Y7,		54	
+	
+
+;===============================
+;Temporary scratchpad locations
+;===============================
+CONSTANT	SP_UPDATE_LOC,	40	
+CONSTANT	SP_STACK_L1,	41
+CONSTANT	SP_STACK_L2,	42
+CONSTANT	SP_VALID_X_P1,	43
+CONSTANT	SP_VALID_Y_P1,	44
+CONSTANT	SP_STACK_L3,	45
+CONSTANT	SP_INVALID_FLAG,46	
+CONSTANT	SP_STACK_L4,	47	
+CONSTANT	SP_VALID_X_P2,	48	
+CONSTANT	SP_VALID_Y_P2,	49
+CONSTANT	SP_LOC_X_OUT,	4A
+CONSTANT	SP_J_J_FLAG,	4B
+CONSTANT	SP_P1_COUNT,	4C
+CONSTANT	SP_P2_COUNT,	4D
+
+
+
+; ===============
+; === main()  ===
+; ===============
+
+ADDRESS	000
+				JUMP	main						; workaround to avoid location 3 corruption
+				JUMP	main						; by Vivado Hardware Manager.  Bug was flagged by
+				JUMP	main						; Ken Chapman and is known to be in 2014.2
+				JUMP	main						; Address 003 can be corrupted by Vivado HW manager
+													;
+main:			CALL	init_P1X					; initialize button to MotCtl lookup table
+				CALL	init_P1Y					; initialize movement to character code lookup table
+				CALL	init_P2X					; initialize button to MotCtl lookup table
+				CALL	init_P2Y		
+				ENABLE	INTERRUPT					; get the ball rolling
+				LOAD	s1, 08
+				STORE	s1, SP_P1_COUNT	
+				STORE	s1, SP_P2_COUNT
+									
+
+; ========================
+; === Main  Game Logic ===
+; ========================
+
+
+;**************************************************************************************
+;**************************************************************************************
+; 	Player 1 move
+;**************************************************************************************
+;**************************************************************************************	
+
+main_L0:		INPUT	Rotary_Value, PA_ENC1		;   Get ENC piece selection 0-7
+				AND		Rotary_Value, MSK_ENC_POSITION	
+				LOAD 	s0, Rotary_Value
+				LOAD	s7, Rotary_Value
+back_p1_check:	FETCH	LocX, (Rotary_Value)		; 	Get status of selected piece (pawn/king/dead)
+				COMPARE	LocX, FALSE
+				JUMP 	Z, next_loc_p1				; 	Add 1 if this piece is gone and go back_p1_check
+				
+				ADD		Rotary_Value, 20
+				FETCH	LocY, (Rotary_Value)		; 	Get yloc
+				LOAD 	sB, 09 
+				STORE	sB, SP_VALID_X_P1 
+				STORE	sB, SP_VALID_Y_P1 
+				STORE	sB, SP_LOC_X_OUT
+				
+				AND		LocY,	MSK_LOCY
+				
+				OUTPUT	LocX, PA_LOCX_CURSOR		; 	Put cursor icon on piece
+				OUTPUT	LocY, PA_LOCY_CURSOR
+				
+				
+				INPUT	Rotary_Value, PA_ENC1
+				AND		Rotary_Value, MSK_ENC_BUTTON
+				JUMP	Z, main_L0					; 	Button pushed? No, back to wait loop
+				LOAD	s6, Rotary_Value
+				
+				;	Button pushed, piece was chosen
+				
+				LOAD	s3, 01
+				LOAD	s4, 00
+				
+				
+				LOAD	s5, LocX 	
+
+				OUTPUT	LocX, PA_LOCX_STATE			; 	Send out the LocX and LocY to update the state RAM
+				OUTPUT	LocY, PA_LOCY_STATE
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE
+				
+				; Reread the LocY to check if the selected icon is a king
+				
+				ADD 	s7,	   20					
+				FETCH	LocY,	(s7)
+				SUB		s7,		20
+
+				SL0		LocY
+				JUMP 	C,		king_p1_moves		; If the Icon is a king, jump to move the icon as a king, else continue
+				SR0		LocY
+					
+				ADD 	LocY, 0E
+				SUB 	LocX, 0E
+				
+				
+				LOAD	s1, LocX
+				ADD		s1, 1C
+				LOAD	s2, LocX
+				
+				LOAD 	s8, LocX
+				CALL	cursor_boundary_x			; 	Check boundary conditions
+				CALL	cursor_boundary_y
+				
+				JUMP 	jump_p1
+				
+				CALL	valid_p1 					; Call to check if the move is valid
+				
+				STORE	s1, SP_STACK_L1				
+				FETCH	s1,	SP_INVALID_FLAG
+				COMPARE	s1, 01							
+				JUMP	Z, move_cancelled			; If the Move is valid go on and update the cursor location, else jump to cancel the move and choose another move by the player	
+				FETCH	s1, SP_STACK_L1				
+				OUTPUT	LocX, PA_LOCX_CURSOR
+				OUTPUT	LocY, PA_LOCY_CURSOR
+				STORE	LocX, SP_VALID_X_P1
+				STORE	LocY, SP_VALID_Y_P1
+				STORE	sB, SP_LOC_X_OUT
+				
+				INPUT	Rotary_Value, PA_ENC1
+				AND		Rotary_Value, MSK_ENC_POSITION
+				
+				COMPARE Rotary_Value, s0
+				
+				JUMP 	Z, event
+				JUMP 	C, subtract 
+				; Calculate the new locations of the cursor by adding and subtracting 1C
+addition:		COMPARE s1, LocX
+				JUMP 	Z, subtract
+				COMPARE	s8, F2
+				JUMP	Z, position
+				
+				ADD 	LocX, 1C
+				JUMP 	position
+				
+subtract:  		COMPARE s2, LocX
+				JUMP 	Z, addition
+				
+				COMPARE	s8, F2
+				JUMP	Z, position
+				SUB		LocX, 1C				
+				; Call the functions to check if the new locations are on the board
+position:		CALL	cursor_boundary_x
+				CALL	cursor_boundary_y
+				; Check if there is a jump available
+				JUMP	jump_p1
+				; Check if there is a valid move to be made
+no_change:		CALL	valid_p1
+				
+				STORE	s1, SP_STACK_L1
+				FETCH	s1,	SP_INVALID_FLAG
+				COMPARE	s1, 01
+				JUMP	Z, move_cancelled			; If the Move is valid go on and update the cursor location, else jump to cancel the move and choose another move by the player	
+				FETCH	s1, SP_STACK_L1
+				OUTPUT	LocX, PA_LOCX_CURSOR
+				OUTPUT	LocY, PA_LOCY_CURSOR
+				STORE	LocX, SP_VALID_X_P1
+				STORE	LocY, SP_VALID_Y_P1
+				STORE	sB, SP_LOC_X_OUT
+				
+changed_p1:		LOAD 	s0, Rotary_Value
+				; Check if the button is pressed and decided to make the move
+				INPUT	Rotary_Value, PA_ENC1
+				AND		Rotary_Value, MSK_ENC_BUTTON
+				LOAD	s6, Rotary_Value
+
+event:			COMPARE	s6, 	MSK_ENC_BUTTON
+				JUMP 	Z, down
+				INPUT	Rotary_Value, PA_ENC1
+				AND		Rotary_Value, MSK_ENC_BUTTON
+				; if selected jump to move the icon			
+				JUMP	NZ, next_play
+				; else loop back and check if the cursor position is to be changed
+down:			INPUT	Rotary_Value, PA_ENC1
+				AND		Rotary_Value, MSK_ENC_POSITION
+				
+				COMPARE	s8, F2
+				JUMP	Z, position
+				COMPARE Rotary_Value, s0
+							
+				JUMP 	Z, event
+				JUMP 	C, subtract 
+				JUMP	NC, addition
+				
+				; If the selected move is to be jumped over the other player icon, execute these functions
+changed_p1_update:
+				; Output to update the state of the player 2 icon in the state RAM	
+				LOAD	s3, 01
+				LOAD	s4, 00
+				
+				OUTPUT	LocX, PA_LOCX_STATE
+				OUTPUT	LocY, PA_LOCY_STATE
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE	
+				
+				LOAD	LocX, s9
+				LOAD	LocY, sA
+				; update the scratch pad memory of the jumped over location to false locations
+				STORE	sA, (s7)
+				FETCH	s9, SP_UPDATE_LOC
+				LOAD	sA, FALSE
+				STORE 	sA, (s9)
+				SUB		s9, 20
+				STORE 	sA, (s9)
+				
+				LOAD    s9, LocX
+				LOAD 	sA, LocY
+				; update the x-cordinate in the scratch pad memory of player 1 icon.
+				STORE	s9, (s7)
+				ADD		s7, 	20
+				COMPARE	LocY,	62				; check if the player 1 icon is a king 
+				JUMP	Z,     king_p1			; If yes jump to write the icon as a king, else continue
+				STORE	sA, (s7)
+				
+				; Output to update the state of the player 1 icon in the state RAM	
+				LOAD	s3, 01				
+				LOAD	s4, 01
+				
+				OUTPUT	s9, PA_LOCX_STATE
+				OUTPUT	sA, PA_LOCY_STATE
+				
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+			
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE	
+				
+				;Decrement the player 2 count by 1 
+				FETCH 	s1,   SP_P2_COUNT
+				SUB		s1,   01
+				OUTPUT	s1, PA_DIG7
+				COMPARE	s1,   00
+				JUMP 	Z, done_p1			; Check if the Player 2 count has decremented to 0, if yes jump to display the victory
+				STORE	s1, SP_P2_COUNT		; Else continue if double jump is available by the players			
+				JUMP	check_j_j
+
+done_p1:		LOAD	s1, 01
+				OUTPUT  s1, PA_P1_WON		; Output to display the player 1 victory
+				STORE	s1, SP_P2_COUNT					
+				JUMP	check_j_j
+
+				
+				
+next_play:		LOAD	s6, Rotary_Value	
+				COMPARE sB, 05					; Check if the player has selected to jump over the other player icon,
+				JUMP    Z, changed_p1_update	; if yes, jump to update as such, else continue 
+					
+				; update the x-cordinate in the scratch pad memory of player 1 icon.
+				STORE	LocX, (s7)
+				ADD		s7, 	20
+				COMPARE	LocY,	62				; check if the player 1 icon is a king 
+				JUMP	Z,     king_p1			; If yes jump to write the icon as a king, else continue
+				STORE	LocY, (s7)
+				
+				; Output to update the state of the player 1 icon in the state RAM	
+				LOAD	s3, 01
+				LOAD	s4, 01
+				
+				OUTPUT	LocX, PA_LOCX_STATE
+				OUTPUT	LocY, PA_LOCY_STATE
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE		
+				; Jump for the player 2 moves
+				JUMP    main_L1
+				
+next_loc_p1	:	ADD 	Rotary_Value, 01
+				JUMP	back_p1_check	
+
+				; If the icon selected could not be moved, the move has to be cancelled. This is done by 
+				; writing back to the State RAM and jumping to take the input again
+move_cancelled:	LOAD	s3, 01
+				LOAD	s4, 01
+				
+				LOAD	s5, LocX
+				OUTPUT	LocX, PA_LOCX_STATE
+				OUTPUT	LocY, PA_LOCY_STATE
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE				
+				JUMP    main_L0
+				
+				; If the icon is converted to a king, write the state of the icon as a king state and store in scratchpad 
+				; by appending 1 to the MSB of the y location of the Icon
+king_p1:		LOAD	s3, 01
+				LOAD	s4, 03
+										
+				OUTPUT	LocX, PA_LOCX_STATE
+				OUTPUT	LocY, PA_LOCY_STATE
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE	
+
+				OR		LocY, MSK_KING_P
+				STORE	LocY, (s7)
+				
+				; Jump for the player 2 moves
+				JUMP    main_L1
+
+				
+;=================================================================================================
+;	KING MOVES: The control jumps here when the piece selected is determined to be a king
+;=================================================================================================
+king_p1_moves:	SR0		LocY
+				SUB		LocY, 0E
+				SUB		LocX, 0E
+				
+			
+				LOAD	s1, LocX
+				ADD		s1, 1C
+				LOAD	s2, LocX
+				
+				LOAD 	s8, LocX
+				
+				CALL	cursor_boundary_x			; 	Check boundary conditions
+				CALL	cursor_boundary_y
+			
+
+				OUTPUT	LocX, PA_LOCX_CURSOR
+				OUTPUT	LocY, PA_LOCY_CURSOR
+				
+				
+				INPUT	Rotary_Value, PA_ENC1
+				AND		Rotary_Value, MSK_ENC_POSITION
+				
+				COMPARE Rotary_Value, s0
+				
+				JUMP 	Z, event_king_p1
+				JUMP 	C, subtract_king_p1 
+				; Calculate the new locations of the cursor by adding and subtracting 1C
+addition_king_p1:
+				COMPARE s1, LocX
+				JUMP 	Z, subtract_king_p1
+				COMPARE	s8, F2
+				JUMP	Z, position_king_p1
+				
+				ADD 	LocX, 1C
+				JUMP 	position_king_p1
+				
+subtract_king_p1:
+				COMPARE s2, LocX
+				JUMP 	Z, addition_king_p1
+				
+				COMPARE	s8, F2
+				JUMP	Z, position_king_p1
+				SUB		LocX, 1C				
+				
+				; Call the functions to check if the new locations are on the board
+position_king_p1:
+				CALL	cursor_boundary_x
+				CALL	cursor_boundary_y
+				OUTPUT	LocX, PA_LOCX_CURSOR
+				OUTPUT	LocY, PA_LOCY_CURSOR
+
+event_king_p1:  LOAD 	s0, Rotary_Value
+				
+				INPUT	Rotary_Value, PA_ENC1
+				AND		Rotary_Value, MSK_ENC_BUTTON
+				LOAD	s6, Rotary_Value
+				; Check if the button is pressed and decided to make the move
+				COMPARE	s6, 	MSK_ENC_BUTTON
+				JUMP 	Z, down_king_p1
+				INPUT	Rotary_Value, PA_ENC1
+				AND		Rotary_Value, MSK_ENC_BUTTON
+				; if selected jump to move the icon						
+				JUMP	NZ, next_play_king_p1
+				; else loop back and check if the cursor position is to be changed	
+down_king_p1:	INPUT	Rotary_Value, PA_ENC1
+				AND		Rotary_Value, MSK_ENC_POSITION
+				
+				COMPARE	s8, F2
+				JUMP	Z, position_king_p1
+				COMPARE Rotary_Value, s0
+							
+				JUMP 	Z, event_king_p1
+				JUMP 	C, subtract_king_p1 
+				JUMP	NC, addition_king_p1
+
+next_play_king_p1:	LOAD	s6, Rotary_Value
+				
+				; update the x-cordinate in the scratch pad memory of player 1 icon.
+				STORE	LocX, (s7)
+				ADD		s7, 	20
+				; Output to update the state of the player 1 icon in the state RAM					
+				LOAD	s3, 01
+				LOAD	s4, 03
+				
+				OUTPUT	LocX, PA_LOCX_STATE
+				OUTPUT	LocY, PA_LOCY_STATE
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE	
+				
+				OR		LocY,	MSK_KING_P
+				STORE	LocY, (s7)
+				
+				; Jump for the player 2 moves
+				JUMP    main_L1				
+				
+;**************************************************************************************
+;**************************************************************************************
+; 	Player 2 move
+;**************************************************************************************
+;**************************************************************************************	
+				
+				
+				
+main_L1:		INPUT	Rotary_Value, PA_ENC2 ; Takes rotary value
+				AND		Rotary_Value, MSK_ENC_POSITION	
+				LOAD 	s0, Rotary_Value
+				LOAD	s7, Rotary_Value
+				ADD		Rotary_Value, 09				; Saves it into 
+				
+back_p2_check:	FETCH	LocX, (Rotary_Value)
+				COMPARE	LocX, FALSE						; Checks if this piece is still on the board
+				JUMP 	Z, next_loc_p2					; 
+				
+				ADD		Rotary_Value, 20
+				FETCH	LocY, (Rotary_Value)
+				LOAD 	sB, 09 
+				STORE	sB, SP_VALID_X_P2 
+				STORE	sB, SP_VALID_Y_P2 
+				STORE	sB, SP_LOC_X_OUT
+				AND		LocY,	MSK_LOCY
+				OUTPUT	LocX, PA_LOCX_CURSOR			; moves cursor to selected pawn
+				OUTPUT	LocY, PA_LOCY_CURSOR
+				
+				
+				INPUT	Rotary_Value, PA_ENC2			; read button first time
+				AND		Rotary_Value, MSK_ENC_BUTTON
+				JUMP	Z, main_L1						; if not pressed, wait loop
+				LOAD	s6, Rotary_Value				; debounce
+				
+				
+				LOAD	s3, 01
+				LOAD	s4, 00
+				
+				LOAD	s5, LocX
+				OUTPUT	LocX, PA_LOCX_STATE 			; erases pawn in state RAM
+				OUTPUT	LocY, PA_LOCY_STATE
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE
+				
+				ADD 	s7,	   29
+				FETCH	LocY,	(s7)
+				SUB		s7,		29
+
+				SL0		LocY
+				JUMP 	C,		king_p2_moves
+				SR0		LocY
+				
+				SUB 	LocY, 0E					; Calculates next left location 
+				SUB		LocX, 0E
+				
+				LOAD	s8, LocX
+				
+				LOAD	s1, LocX
+				LOAD	s2, LocX
+				ADD		s1, 1C
+				CALL	cursor_boundary_x			; checks boundary, changes LocX, LocY if out of bounds 
+				CALL	cursor_boundary_y
+				JUMP	jump_p2
+				
+				CALL	valid_p2
+				STORE	s1, SP_STACK_L1
+				FETCH	s1,	SP_INVALID_FLAG
+				COMPARE	s1, 01
+				JUMP	Z, move_cancelled_p2
+				FETCH	s1, SP_STACK_L1
+				
+				OUTPUT	LocX, PA_LOCX_CURSOR		; Moves cursor to move select position
+				OUTPUT	LocY, PA_LOCY_CURSOR
+				STORE	LocX, SP_VALID_X_P2
+				STORE	LocY, SP_VALID_Y_P2
+				STORE	sB, SP_LOC_X_OUT
+				
+				
+				INPUT	Rotary_Value, PA_ENC2
+				AND		Rotary_Value, MSK_ENC_POSITION
+				
+				COMPARE Rotary_Value, s0			; COMPARE ENC reading to original value to add/subtract cursor pos
+				
+				JUMP 	Z, event_p2					; If same, check if pushed button (player chooses this move)
+				JUMP 	C, subtract_p2 				; Otherwise, change cursor position
+				
+				
+				
+addition_p2:	COMPARE s1, LocX
+				JUMP 	Z, subtract_p2
+				COMPARE	s8, F2					; Check if out of bounds
+				JUMP	Z, position_p2
+				ADD 	LocX, 1C				; If so, fix 
+				JUMP 	position_p2
+				
+subtract_p2:	COMPARE s2, LocX
+				JUMP 	Z, addition_p2
+				COMPARE	s8, F2					; Check if out of bounds
+				JUMP	Z, position_p2
+				SUB		LocX, 1C				; If so, fix
+				
+position_p2:	CALL	cursor_boundary_x
+				CALL	cursor_boundary_y
+				JUMP	jump_p2					; Check if jump available
+				
+no_change_p2:	CALL	valid_p2
+				STORE	s1, SP_STACK_L1
+				FETCH	s1,	SP_INVALID_FLAG
+				COMPARE	s1, 01
+				JUMP	Z, move_cancelled_p2
+				FETCH	s1, SP_STACK_L1
+				
+				OUTPUT	LocX, PA_LOCX_CURSOR	; Output chosen position 
+				OUTPUT	LocY, PA_LOCY_CURSOR
+				STORE	LocX, SP_VALID_X_P2
+				STORE	LocY, SP_VALID_Y_P2
+				STORE	sB, SP_LOC_X_OUT
+				
+changed_p2:		LOAD 	s0, Rotary_Value
+				INPUT	Rotary_Value, PA_ENC2	; Read button position
+				AND		Rotary_Value, MSK_ENC_BUTTON
+				LOAD	s6, Rotary_Value
+
+event_p2:		COMPARE	s6, 	MSK_ENC_BUTTON 	; Debounce logic
+				JUMP 	Z, down_p2				; If not debounced, continue to down_p2
+				INPUT	Rotary_Value, PA_ENC2	; If debounced (value changed), take new input
+				AND		Rotary_Value, MSK_ENC_BUTTON
+				JUMP	NZ, next_play_p2 		; NZ? you have selected your move
+				
+down_p2:		INPUT	Rotary_Value, PA_ENC2	; Read rotary value
+				AND		Rotary_Value, MSK_ENC_POSITION
+
+				COMPARE Rotary_Value, s0
+				
+				; Loop back, continue updating cursor while waiting for button selection
+				JUMP 	Z, event_p2				; If same
+				JUMP 	C, subtract_p2 			; If less
+				JUMP	NC, addition_p2			; If more
+		
+				; Called from next_play_p2 when jump is available and player has selected it		
+changed_p2_update:
+				
+				; Output to update the state of the player 1 icon in the state RAM	
+				LOAD	s3, 01
+				LOAD	s4, 00
+				
+				OUTPUT	LocX, PA_LOCX_STATE
+				OUTPUT	LocY, PA_LOCY_STATE
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE	
+				
+				LOAD	LocX, s9
+				LOAD	LocY, sA
+				; update the scratch pad memory of the jumped over location to false locations
+				
+				FETCH	s9, SP_UPDATE_LOC
+				LOAD	sA, 04
+				STORE 	sA, (s9)
+				SUB		s9, 20
+				STORE 	sA, (s9)
+				
+				LOAD    s9, LocX
+				LOAD 	sA, LocY
+				; update the x-cordinate in the scratch pad memory of player 1 icon.	
+				ADD		s7, 	09
+				STORE	s9, (s7)
+				ADD		s7, 20				
+				COMPARE	LocY,	00				; check if the player 2 icon is a king 
+				JUMP	Z,     king_p2			; If yes jump to write the icon as a king, else continue
+				STORE 	sA, (s7)
+				
+				; Output to update the state of the player 2 icon in the state RAM	; Output to update the state of the player 1 icon in the state RAM	
+				
+				LOAD	s3, 01
+				LOAD	s4, 02
+				
+				OUTPUT	s9, PA_LOCX_STATE		; Update board RAM with new piece location
+				OUTPUT	sA, PA_LOCY_STATE
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE		
+				
+				;Decrement the player 1 count by 1 
+				FETCH 	s1,   SP_P1_COUNT
+				SUB		s1,   01
+				
+				COMPARE	s1,   04
+				JUMP 	Z, done_p2			; Check if the Player 2 count has decremented to 0, if yes jump to display the victory
+				STORE	s1, SP_P1_COUNT		; Else continue if double jump is available for the player			
+				JUMP	check_j_j_p2
+
+done_p2:		LOAD	s1, 01
+				OUTPUT  s1, PA_P2_WON				; Output to display the player 2 victory
+				STORE	s1, SP_P1_COUNT					
+				JUMP	check_j_j_p2
+
+				
+				; Called when selection is made
+next_play_p2:	LOAD 	s6, Rotary_Value
+				COMPARE sB, 05					; sB is jump available flag
+				JUMP    Z, changed_p2_update 	; If jump is available and you've selected it
+				; update the x-cordinate in the scratch pad memory of player 1 icon.	
+				ADD		s7, 	09
+				STORE	LocX, (s7)
+				ADD		s7, 	20
+				COMPARE	LocY,	00				; check if the player 2 icon is a king 
+				JUMP	Z,     king_p2			; If yes jump to write the icon as a king, else continue
+				STORE	LocY, (s7)
+		
+				LOAD	s3, 01
+				LOAD	s4, 02
+				
+				OUTPUT	LocX, PA_LOCX_STATE
+				OUTPUT	LocY, PA_LOCY_STATE
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE		
+				; Jump for the player 1 moves
+				JUMP 	main_L0					; Player 1's turn
+				
+next_loc_p2	:	ADD 	Rotary_Value, 01
+				JUMP	back_p2_check
+			
+				; If the icon selected could not be moved, the move has to be cancelled. This is done by 
+				; writing back to the State RAM and jumping to take the input again
+move_cancelled_p2:	LOAD	s3, 01
+				LOAD	s4, 02
+				
+				LOAD	s5, LocX
+				OUTPUT	LocX, PA_LOCX_STATE
+				OUTPUT	LocY, PA_LOCY_STATE
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE				
+				JUMP    main_L1	
+				
+				
+				; If the icon is converted to a king, write the state of the icon as a king state and store in scratchpad 
+				; by appending 1 to the MSB of the y location of the Icon
+king_p2:		LOAD	s3, 01
+				LOAD	s4, 04
+										
+				OUTPUT	LocX, PA_LOCX_STATE
+				OUTPUT	LocY, PA_LOCY_STATE
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE	
+
+				OR		LocY, MSK_KING_P
+				STORE	LocY, (s7)
+				; Jump for the player 1 moves
+				JUMP 	main_L0					; Player 1's turn
+				
+
+
+;=================================================================================================
+;	KING MOVES: The control jumps here when the piece selected is determined to be a king
+;=================================================================================================
+king_p2_moves:	SR0		LocY
+				ADD		LocY, 0E
+				SUB		LocX, 0E
+				
+			
+				LOAD	s1, LocX
+				ADD		s1, 1C
+				LOAD	s2, LocX
+				
+				LOAD 	s8, LocX
+				
+				CALL	cursor_boundary_x			; 	Check boundary conditions
+				CALL	cursor_boundary_y
+			
+
+				OUTPUT	LocX, PA_LOCX_CURSOR
+				OUTPUT	LocY, PA_LOCY_CURSOR
+				
+				
+				INPUT	Rotary_Value, PA_ENC2
+				AND		Rotary_Value, MSK_ENC_POSITION
+				
+				COMPARE Rotary_Value, s0
+				
+				JUMP 	Z, event_king_p2
+				JUMP 	C, subtract_king_p2 
+				; Calculate the new locations of the cursor by adding and subtracting 1C
+addition_king_p2:COMPARE s1, LocX
+				JUMP 	Z, subtract_king_p2
+				COMPARE	s8, F2
+				JUMP	Z, position_king_p2
+				
+				ADD 	LocX, 1C
+				JUMP 	position_king_p2
+				
+subtract_king_p2: COMPARE s2, LocX
+				JUMP 	Z, addition_king_p2
+				
+				COMPARE	s8, F2
+				JUMP	Z, position_king_p2
+				SUB		LocX, 1C				
+				
+				; Call the functions to check if the new locations are on the board
+position_king_p2:CALL	cursor_boundary_x
+				CALL	cursor_boundary_y
+				OUTPUT	LocX, PA_LOCX_CURSOR
+				OUTPUT	LocY, PA_LOCY_CURSOR
+
+event_king_p2:LOAD 	s0, Rotary_Value
+				
+				INPUT	Rotary_Value, PA_ENC2
+				AND		Rotary_Value, MSK_ENC_BUTTON
+				LOAD	s6, Rotary_Value
+				; Check if the button is pressed and decided to make the move
+				COMPARE	s6, 	MSK_ENC_BUTTON
+				JUMP 	Z, down_king_p2
+				INPUT	Rotary_Value, PA_ENC2
+				AND		Rotary_Value, MSK_ENC_BUTTON
+				; if selected jump to move the icon		
+				JUMP	NZ, next_play_king_p2
+				; else loop back and check if the cursor position is to be changed	
+down_king_p2:	INPUT	Rotary_Value, PA_ENC2
+				AND		Rotary_Value, MSK_ENC_POSITION
+				
+				COMPARE	s8, F2
+				JUMP	Z, position_king_p2
+				COMPARE Rotary_Value, s0
+							
+				JUMP 	Z, event_king_p2
+				JUMP 	C, subtract_king_p2
+				JUMP	NC, addition_king_p2
+
+next_play_king_p2:	LOAD	s6, Rotary_Value
+				; update the x-cordinate in the scratch pad memory of player 2 icon.
+				ADD  	s7, 09
+				STORE	LocX, (s7)
+				ADD		s7, 	20
+				
+				; Output to update the state of the player 2 icon in the state RAM					
+				LOAD	s3, 01
+				LOAD	s4, 04
+				
+				OUTPUT	LocX, PA_LOCX_STATE
+				OUTPUT	LocY, PA_LOCY_STATE
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE	
+				
+				OR		LocY,	MSK_KING_P
+				STORE	LocY, (s7)
+				
+				JUMP    main_L0								
+	
+
+
+
+
+
+;**************************************************************************************				
+; Functions to check the boundary conditions for X and Y locations of the cursor
+;**************************************************************************************	
+
+cursor_boundary_x:
+				COMPARE LocX, F2
+				JUMP	NZ,	next_condition_1
+				STORE 	LocX, SP_LOC_X_OUT
+				LOAD 	LocX, 0E
+				RETURN				
+
+next_condition_1: 
+				COMPARE LocX, 70
+				JUMP 	NZ, next_condition_2
+				SUB		LocX, 1C
+next_condition_2:RETURN
+				
+				
+cursor_boundary_y:
+				COMPARE LocY, 70
+				JUMP	NZ,	next_condition_3
+				SUB		LocY, 1C
+				RETURN				
+next_condition_3:
+				COMPARE LocY, F2
+				JUMP	NZ,	next_condition_4
+				LOAD 	LocY, 0E
+next_condition_4:RETURN	
+			
+; Checking for s9 and sA
+
+cursor_boundary_s9:
+				COMPARE s9, F2
+				JUMP	NZ,	next_condition_1_s9
+				LOAD 	s9, 0E
+				RETURN				
+next_condition_1_s9:	
+				COMPARE s9, 70
+				JUMP 	NZ, next_condition_2_s9
+				SUB		s9, 1C
+next_condition_2_s9:RETURN
+				
+				
+cursor_boundary_sA:
+				COMPARE sA, 70
+				JUMP	NZ,	next_condition_3_sA
+				SUB		sA, 1C
+				RETURN				
+next_condition_3_sA:
+				COMPARE sA, F2
+				JUMP	NZ,	next_condition_4_sA
+				LOAD 	sA, 0E
+next_condition_4_sA:RETURN
+			
+			
+			
+			
+			
+;**************************************************************************************
+;  function to jump over other player icon Player 1
+;**************************************************************************************
+
+jump_p1:		LOAD	s9, 09
+next_x_loc:		FETCH 	sA, (s9)
+				COMPARE LocX, sA
+				JUMP    Z,  check_y
+next_x:			ADD		s9,01
+				
+				COMPARE	s9, 11
+				JUMP 	NZ, next_x_loc
+				JUMP    no_change
+				
+next_pawn:		SUB		s9, 20	
+				JUMP	next_x
+				
+check_y:		ADD		s9,20				
+				FETCH 	sA, (s9)
+				SL0		sA
+				SR0		sA
+				COMPARE LocY, sA
+				JUMP    Z,  match
+				JUMP 	NZ, next_pawn
+
+match:			STORE 	s9, SP_UPDATE_LOC
+				LOAD	s9,	LocX
+				LOAD    sA,	LocY
+				ADD		sA,	0E
+				
+				COMPARE	s5,	LocX
+				JUMP    C, per_add
+				SUB		s9, 0E
+				JUMP    cont
+per_add:		ADD		s9, 0E
+cont:			JUMP	 valid_jump
+				
+
+no_changed:		COMPARE	s9, 70
+				JUMP 	Z, 	x_changed_p1
+				COMPARE	s9, F2
+				JUMP 	Z, 	x1_changed_p1
+				OUTPUT	s9, PA_LOCX_CURSOR
+				OUTPUT	sA, PA_LOCY_CURSOR
+				STORE	s9, SP_VALID_X_P1
+				STORE	sA, SP_VALID_Y_P1
+				LOAD	sB, 05
+				JUMP	changed_p1
+				
+x_changed_p1:	SUB		LocX, 1C
+				JUMP	no_changed
+x1_changed_p1:	ADD 	LocX, 1C
+				JUMP    no_changed
+
+
+
+
+;**************************************************************************************
+;  function to jump over other player icon Player 2
+;**************************************************************************************
+
+jump_p2:		LOAD	s9, 00			; Load scratchpad P1 base address
+next_x_loc_p2:	FETCH 	sA, (s9)
+				COMPARE LocX, sA		; Gets this piece's x location and compares
+				JUMP    Z,  check_y_p2	; if same, going to compare y
+next_x_p2:		ADD		s9,01			; not same, move to next piece
+				
+				COMPARE	s9, 08				; checks all 8 pieces if any have changed
+				JUMP 	NZ, next_x_loc_p2
+				JUMP    no_change_p2		; none have changed - No P1 pieces can be jumped 
+				
+next_pawn_p2:	SUB		s9, 20	
+				JUMP	next_x_p2
+				
+check_y_p2:		ADD		s9,20				; y address for chosen P1 piece 
+				FETCH 	sA, (s9)
+				SL0		sA
+				SR0		sA
+				
+				COMPARE LocY, sA 			; compare if the Y-location matches
+				JUMP    Z,  match_p2 		; There's a P1 piece in the spot where the cursor is - P2 can jump
+				JUMP 	NZ, next_pawn_p2	; else keep looking through all 8 pieces
+
+match_p2:		STORE 	s9, SP_UPDATE_LOC 	; s9 has the Y-location of the piece to be jumped
+				LOAD	s9,	LocX
+				LOAD    sA,	LocY
+				SUB		sA,	0E				; Move locy one row up
+				
+				COMPARE	s5,	LocX 			; s5 has previous locx, compare if you have to add or subtract 0E to x
+				JUMP    C, per_add_p2
+				SUB		s9, 0E
+				JUMP    cont_p2
+per_add_p2:		ADD		s9, 0E
+cont_p2:		COMPARE	s9, 70
+				JUMP 	Z, 	x_changed_p2
+				COMPARE	s9, F2
+				JUMP 	Z, 	x1_changed_p2
+				OUTPUT	s9, PA_LOCX_CURSOR
+				OUTPUT	sA, PA_LOCY_CURSOR
+				STORE	s9, SP_VALID_X_P2
+				STORE	sA, SP_VALID_Y_P2
+				LOAD	sB, 05				; Set sB flag to jump available
+				JUMP	changed_p2			
+
+
+x_changed_p2:	SUB		LocX, 1C
+				JUMP	no_change_p2
+x1_changed_p2:	ADD 	LocX, 1C
+				JUMP    no_change_p2				
+				
+
+
+;*************************************************************************************
+; Function to decide a valid move				
+;*************************************************************************************
+; Checks if there's a piece already there, it doesn't show the cursor as an available move
+valid_p1:		STORE	s3,	SP_STACK_L1
+				STORE	s4,	SP_STACK_L2
+				STORE	LocX, SP_STACK_L4
+				LOAD	s3, 00
+				STORE	s3, SP_INVALID_FLAG				
+				
+second_comp:	LOAD	s3, 00
+next_comparison:FETCH	s4, (s3)
+				COMPARE	s4, LocX
+				JUMP	Z, 	check_for_y
+				COMPARE	s4, s9
+				JUMP	Z,	check_for_y_diff
+next_loc_comp:	ADD		s3,	01
+				COMPARE	s3, 08
+				JUMP	Z, move_continue
+				JUMP	next_comparison
+				
+check_for_y:	ADD 	s3, 20
+				FETCH	s4, (s3)
+				SL0		s4
+				SR0		s4
+				COMPARE	s4, LocY
+				JUMP	Z, 	next_val_move
+				JUMP	next_loc_check
+check_for_y_diff:ADD 	s3, 20
+				FETCH	s4, (s3)
+				SL0		s4
+				SR0		s4
+				COMPARE	s4, sA
+				JUMP	Z,	next_val_move
+next_loc_check:	SUB		s3, 20
+				JUMP	next_loc_comp
+				
+next_val_move:	FETCH 	s3, SP_VALID_X_P1
+				FETCH	s4,	SP_VALID_Y_P1
+				COMPARE	s3, 09
+				JUMP 	Z, move_not_valid
+				LOAD	LocX, s3
+				LOAD	s9,	s3
+				LOAD	LocY, s4
+				LOAD	sA,	s4
+				LOAD	s3,	00
+				STORE	s3, SP_INVALID_FLAG
+				FETCH	s3, SP_STACK_L1
+				FETCH	s4, SP_STACK_L2
+				RETURN			
+				
+move_not_valid:	STORE	s3, SP_STACK_L3
+				FETCH	s3, SP_INVALID_FLAG
+				COMPARE	s3, 01
+				JUMP    Z, mov_cancel
+				COMPARE	LocX, 0E
+				JUMP	Z, mov_cancel_cond
+cont_check:		ADD		LocX, 1C
+				COMPARE LocX, 70
+				JUMP	Z, mov_cancel
+				STORE	s3, SP_STACK_L3
+				LOAD	s3, 01
+				STORE	s3, SP_INVALID_FLAG
+				FETCH	s3, SP_STACK_L3
+				JUMP    second_comp
+
+mov_cancel:		STORE	s3, SP_STACK_L3
+				LOAD	s3, 01
+				STORE	s3, SP_INVALID_FLAG
+				FETCH	s3, SP_STACK_L3
+				FETCH	s3, SP_STACK_L1
+				FETCH	s4, SP_STACK_L2
+				FETCH	LocX, SP_STACK_L4
+				SUB		LocY, 0E
+				RETURN	
+				
+move_continue:	LOAD	s3,	00
+				STORE	s3, SP_INVALID_FLAG
+				FETCH	s3, SP_STACK_L1
+				FETCH	s4, SP_STACK_L2
+				FETCH	LocX, SP_STACK_L4
+				RETURN		
+mov_cancel_cond: FETCH	s3, SP_LOC_X_OUT
+				COMPARE	s3, F2
+				JUMP	Z, mov_cancel
+				JUMP 	cont_check
+
+;*************************************************************************************
+; Function to decide a valid move				
+;*************************************************************************************
+; Checks if there's a piece already there, it doesn't show the cursor as an available move
+
+valid_p2:		STORE	s3,	SP_STACK_L1
+				STORE	s4,	SP_STACK_L2
+				STORE	LocX, SP_STACK_L4
+				LOAD	s3, 00
+				STORE	s3, SP_INVALID_FLAG				
+				
+second_comp_p2:	LOAD	s3, 09
+next_comparison_p2:FETCH	s4, (s3)
+				COMPARE	s4, LocX
+				JUMP	Z, 	check_for_y_p2
+				COMPARE	s4, s9
+				JUMP	Z,	check_for_y_diff_p2
+next_loc_comp_p2:ADD		s3,	01
+				COMPARE	s3, 11
+				JUMP	Z, move_continue_p2
+				JUMP	next_comparison_p2
+				
+check_for_y_p2:	ADD 	s3, 20
+				FETCH	s4, (s3)
+				SL0		s4
+				SR0		s4
+				COMPARE	s4, LocY
+				JUMP	Z, 	next_val_move_p2
+				JUMP	next_loc_check_p2
+check_for_y_diff_p2:ADD 	s3, 20
+				FETCH	s4, (s3)
+				COMPARE	s4, sA
+				JUMP	Z,	move_not_valid_p2
+next_loc_check_p2:SUB		s3, 20
+				JUMP	next_loc_comp_p2
+				
+next_val_move_p2:FETCH 	s3, SP_VALID_X_P2
+				FETCH	s4,	SP_VALID_Y_P2
+				COMPARE	s3, 09
+				JUMP 	Z, move_not_valid_p2
+				LOAD	LocX, s3
+				LOAD	s9,	s3
+				LOAD	LocY, s4
+				LOAD	sA,	s4
+				LOAD	s3,	00
+				STORE	s3, SP_INVALID_FLAG
+				FETCH	s3, SP_STACK_L1
+				FETCH	s4, SP_STACK_L2
+				RETURN			
+				
+move_not_valid_p2:STORE	s3, SP_STACK_L3
+				FETCH	s3, SP_INVALID_FLAG
+				COMPARE	s3, 01
+				JUMP    Z, mov_cancel_p2
+				COMPARE	LocX, 0E
+				JUMP	Z, mov_cancel_cond_p2
+cont_check_p2:	ADD		LocX, 1C
+				COMPARE LocX, 70
+				JUMP	Z, mov_cancel_p2
+				STORE	s3, SP_STACK_L3
+				LOAD	s3, 01
+				STORE	s3, SP_INVALID_FLAG
+				FETCH	s3, SP_STACK_L3
+				JUMP    second_comp_p2
+
+mov_cancel_p2:	STORE	s3, SP_STACK_L3
+				LOAD	s3, 01
+				STORE	s3, SP_INVALID_FLAG
+				FETCH	s3, SP_STACK_L3
+				FETCH	s3, SP_STACK_L1
+				FETCH	s4, SP_STACK_L2
+				FETCH	LocX, SP_STACK_L4
+				ADD		LocY, 0E
+				RETURN	
+				
+move_continue_p2:	LOAD	s3,	00
+				STORE	s3, SP_INVALID_FLAG
+				FETCH	s3, SP_STACK_L1
+				FETCH	s4, SP_STACK_L2
+				FETCH	LocX, SP_STACK_L4
+				RETURN		
+mov_cancel_cond_p2: FETCH	s3, SP_LOC_X_OUT
+				COMPARE	s3, F2
+				JUMP	Z, mov_cancel_p2
+				JUMP 	cont_check_p2
+
+				
+				
+				
+				
+				
+				
+valid_jump	:	STORE	s9, SP_STACK_L1
+				STORE	sA, SP_STACK_L2
+				LOAD	sA, 00
+next_x_check:	FETCH	sB, (sA)
+				COMPARE	sB, s9
+				JUMP 	Z, check_y_valid
+next_x_add:		ADD		sA, 01
+				COMPARE	sA, 08
+				JUMP    Z, check_p2_icons
+				JUMP	next_x_check
+			
+check_y_valid:  ADD 	sA, 20
+				FETCH	s9, SP_STACK_L2
+				FETCH	sB, (sA)
+				COMPARE	sB, s9
+				JUMP	Z, move_not
+				SUB		sA, 20 
+				JUMP    next_x_add
+				
+check_p2_icons: LOAD	sA, 09
+next_x_check_p2:	FETCH	sB, (sA)
+				COMPARE	sB, s9
+				JUMP 	Z, check_y_valid_p2
+next_x_add_p2:		ADD		sA, 01
+				COMPARE	sA, 11
+				JUMP    Z, mov_continue
+				JUMP	next_x_check_p2
+			
+check_y_valid_p2:  ADD 	sA, 20
+				FETCH	s9, SP_STACK_L2
+				FETCH	sB, (sA)
+				COMPARE	sB, s9
+				JUMP	Z, move_not
+				SUB		sA, 20 
+				JUMP    next_x_add_p2
+
+mov_continue: 	FETCH	s9, SP_STACK_L1
+				FETCH	sA, SP_STACK_L2
+				JUMP	no_changed
+								
+move_not:		JUMP	changed_p1	
+
+;===================================================================
+;Function to implement the double jump of the player 1
+;===================================================================
+
+check_j_j:		LOAD	s5,   00
+				STORE	s5,   SP_J_J_FLAG
+				LOAD	s2,   00
+				LOAD    s8,	  00
+				LOAD	s9,	LocX
+				LOAD 	sA, LocY
+				ADD		LocY, 0E
+				SUB		LocX, 0E
+				
+check_x_y_j:	LOAD	s4, 09
+check_next:		FETCH	s1, (s4)
+				COMPARE LocX, s1
+				JUMP	Z, check_y_j
+next_x_ad:		ADD 	s4, 01
+				COMPARE	s4, 11
+				JUMP	Z, no_match
+				
+				JUMP	check_next
+
+check_y_j:		ADD  	s4, 20
+				FETCH	s1,(s4)
+				SL0		s1
+				SR0		s1
+				COMPARE s1, LocY
+				JUMP	Z, next_jump_avai
+				SUB		s4, 20
+				JUMP	next_x_ad
+
+no_match:		COMPARE s2, 03
+				JUMP  	Z, main_L1_j
+				;LOAD	sB, 03
+j_next_loc:		ADD 	LocX, 1C
+				LOAD	s2,  03
+				LOAD 	s4, 09
+				JUMP	check_next
+
+next_jump_avai: STORE	s4, SP_UPDATE_LOC
+				LOAD	s8,   02
+				ADD		LocY, 0E
+				COMPARE	s2,   03
+				JUMP	Z,	  per_add_j
+				COMPARE	sB,   03
+				JUMP	Z,	  per_add_j
+				SUB		LocX, 0E
+				JUMP	print
+				
+per_add_j:		ADD		LocX, 0E
+				
+print:			COMPARE	LocY, 70
+				JUMP 	Z, main_L1
+				COMPARE	LocX, 70
+				JUMP	Z, no_match
+				COMPARE	LocX, F2
+				JUMP	Z, no_match
+				
+				OUTPUT	LocX, PA_LOCX_CURSOR
+				OUTPUT	LocY, PA_LOCY_CURSOR
+				
+		
+event_j:		INPUT	Rotary_Value, PA_ENC1
+				AND		Rotary_Value, MSK_ENC_BUTTON
+				LOAD	s6, Rotary_Value
+
+				COMPARE	s6, 	MSK_ENC_BUTTON
+				JUMP 	Z, down_j
+				INPUT	Rotary_Value, PA_ENC1
+				AND		Rotary_Value, MSK_ENC_BUTTON
+							
+				JUMP	NZ, next_play_j
+				
+down_j:			INPUT	Rotary_Value, PA_ENC1
+				AND		Rotary_Value, MSK_ENC_POSITION
+				
+				COMPARE Rotary_Value, s0
+							
+				JUMP	Z, event_j
+				
+no_match_j:		LOAD	s0, Rotary_Value
+				COMPARE	s2, 03
+				JUMP	Z, event_j
+				LOAD	LocX, s9
+				LOAD	LocY, sA
+				ADD		LocY, 0E
+				FETCH	s1, SP_J_J_FLAG
+				COMPARE s1, 01
+				JUMP	Z, add_x_j
+				SUB 	LocX, 0E
+				LOAD	s1, 01
+				STORE	s1, SP_J_J_FLAG
+				LOAD	sB, 00
+				JUMP	check_x_y_j
+
+add_x_j:		ADD  	LocX, 0E
+				LOAD	s1,00
+				STORE	s1, SP_J_J_FLAG
+			
+				LOAD	sB, 03
+				JUMP	check_x_y_j
+
+main_L1_j:		COMPARE	sB, 04
+				JUMP	Z, no_match_j
+				JUMP	main_L1
+
+				
+next_play_j:	STORE	LocY, (s7)
+				SUB		s7, 	20
+				STORE	LocX, (s7)
+				
+				LOAD	s3, 01					; Make P1 Move
+				LOAD	s4, 01
+				
+				OUTPUT	LocX, PA_LOCX_STATE
+				OUTPUT	LocY, PA_LOCY_STATE
+				
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+			
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE		
+				
+				
+				LOAD	s3, 01
+				LOAD	s4, 00
+				
+				OUTPUT	s9, PA_LOCX_STATE
+				OUTPUT	sA, PA_LOCY_STATE
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE	
+				ADD		sA, 0E
+	
+				FETCH	s1, SP_J_J_FLAG
+				COMPARE s1, 00
+				JUMP	Z, add_j
+
+				SUB		s9, 0E
+				JUMP 	below_j
+
+add_j:			ADD 	s9,	0E				
+
+below_j:		LOAD	s3, 01
+				LOAD	s4, 00
+				
+				OUTPUT	s9, PA_LOCX_STATE
+				OUTPUT	sA, PA_LOCY_STATE
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE	
+				
+				FETCH	s9, SP_UPDATE_LOC
+				LOAD	sA, FALSE
+				STORE 	sA, (s9)
+				SUB		s9, 20
+				STORE 	sA, (s9)
+				
+				FETCH 	s1,   SP_P2_COUNT
+				SUB		s1,   01
+				OUTPUT	s1, PA_DIG7
+				COMPARE	s1,   03
+				JUMP 	Z, done_p1_j_j
+				STORE	s1, SP_P2_COUNT					
+				JUMP  main_L1
+
+done_p1_j_j:		LOAD	s1, 01
+				OUTPUT  s1, PA_P1_WON
+				STORE	s1, SP_P2_COUNT					
+				JUMP  main_L1
+
+				
+
+;===================================================================
+;Function to implement the double jump of the player 2
+;===================================================================				
+check_j_j_p2:	LOAD	s5,   00
+				STORE	s5,   SP_J_J_FLAG
+				LOAD	s2,   00
+				LOAD    s8,	  00
+				LOAD	sB,   00
+ 				LOAD	s9,	LocX
+				LOAD 	sA, LocY
+				SUB		LocY, 0E
+				SUB		LocX, 0E
+				
+check_x_y_j_p2:	LOAD	s4, 00
+check_next_p2:		FETCH	s1, (s4)
+				COMPARE LocX, s1
+				JUMP	Z, check_y_j_p2
+next_x_ad_p2:	ADD 	s4, 01
+				COMPARE	s4, 08
+				JUMP	Z, no_match_p2
+				
+				JUMP	check_next_p2
+
+check_y_j_p2:	ADD  	s4, 20
+				FETCH	s1,(s4)
+				SL0		s1
+				SR0		s1
+				COMPARE s1, LocY
+				JUMP	Z, next_jump_avai_p2
+				SUB		s4, 20
+				JUMP	next_x_ad_p2
+
+no_match_p2:	COMPARE s2, 03
+				JUMP  	Z, main_L1_j_p2
+j_next_loc_p2:		ADD 	LocX, 1C
+				LOAD	s2,  03
+				LOAD 	s4, 00
+				JUMP	check_next_p2
+
+next_jump_avai_p2: STORE	s4, SP_UPDATE_LOC
+				LOAD	s8,   02
+				SUB		LocY, 0E
+				COMPARE	s2,   03
+				JUMP	Z,	  per_add_j_p2
+				COMPARE	sB,   03
+				JUMP	Z,	  per_add_j_p2
+				COMPARE	s2,   03
+				JUMP	Z,	  per_add_j_p2
+				SUB		LocX, 0E
+				JUMP	print_p2
+				
+per_add_j_p2:	ADD		LocX, 0E
+				
+print_p2:		COMPARE	LocY, F2
+				JUMP 	Z, main_L0
+				COMPARE	LocX, 70
+				JUMP	Z, no_match_p2
+				COMPARE	LocX, F2
+				JUMP	Z, no_match_p2
+				
+				OUTPUT	LocX, PA_LOCX_CURSOR
+				OUTPUT	LocY, PA_LOCY_CURSOR
+				
+		
+event_j_p2:		INPUT	Rotary_Value, PA_ENC2
+				AND		Rotary_Value, MSK_ENC_BUTTON
+				LOAD	s6, Rotary_Value
+
+				COMPARE	s6, 	MSK_ENC_BUTTON
+				JUMP 	Z, down_j_p2
+				INPUT	Rotary_Value, PA_ENC2
+				AND		Rotary_Value, MSK_ENC_BUTTON
+							
+				JUMP	NZ, next_play_j_p2
+				
+down_j_p2:		INPUT	Rotary_Value, PA_ENC2
+				AND		Rotary_Value, MSK_ENC_POSITION
+				
+				COMPARE Rotary_Value, s0
+							
+				JUMP	Z, event_j_p2
+				
+no_match_j_p2:	LOAD	s0, Rotary_Value
+				COMPARE	s2, 03
+				JUMP	Z, event_j_p2
+				LOAD	LocX, s9
+				LOAD	LocY, sA
+				SUB		LocY, 0E
+				FETCH	s1, SP_J_J_FLAG
+				COMPARE s1, 01
+				JUMP	Z, add_x_j_p2
+				SUB 	LocX, 0E
+				LOAD	s1, 01
+				STORE	s1, SP_J_J_FLAG
+				LOAD	sB, 00
+				JUMP	check_x_y_j_p2
+
+add_x_j_p2:		ADD  	LocX, 0E
+				LOAD	s1,00
+				STORE	s1, SP_J_J_FLAG
+			
+				LOAD	sB, 03
+				JUMP	check_x_y_j_p2
+
+main_L1_j_p2:	COMPARE	sB, 03
+				JUMP	Z, no_match_j_p2
+				JUMP	main_L0
+
+				
+next_play_j_p2:	;ADD		s7, 	09
+				STORE	LocY, (s7)
+				SUB		s7, 	20
+				STORE	LocX, (s7)
+				
+				LOAD	s3, 01					; Make P1 Move
+				LOAD	s4, 02
+				
+				OUTPUT	LocX, PA_LOCX_STATE
+				OUTPUT	LocY, PA_LOCY_STATE
+				
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+			
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE		
+				
+				
+				LOAD	s3, 01
+				LOAD	s4, 00
+				
+				OUTPUT	s9, PA_LOCX_STATE
+				OUTPUT	sA, PA_LOCY_STATE
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE	
+				SUB		sA, 0E
+	
+				FETCH	s1, SP_J_J_FLAG
+				COMPARE s1, 00
+				JUMP	Z, add_j_p2
+
+				SUB		s9, 0E
+				JUMP 	below_j_p2
+
+add_j_p2:		ADD 	s9,	0E				
+
+below_j_p2:		LOAD	s3, 01
+				LOAD	s4, 00
+				
+				OUTPUT	s9, PA_LOCX_STATE
+				OUTPUT	sA, PA_LOCY_STATE
+				OUTPUT	s3,   PA_WEA_STATE
+				OUTPUT	s4,   PA_UPDATE_STATE
+				XOR		s3,	  s3
+				OUTPUT	s3,   PA_WEA_STATE	
+				
+				FETCH	s9, SP_UPDATE_LOC
+				LOAD	sA, FALSE
+				STORE 	sA, (s9)
+				SUB		s9, 20
+				STORE 	sA, (s9)
+				
+				FETCH 	s1,   SP_P1_COUNT
+				SUB		s1,   01
+				COMPARE	s1,   04
+				JUMP 	Z, done_p2_j_j
+				STORE	s1, SP_P1_COUNT					
+				JUMP	main_L0
+
+done_p2_j_j:	LOAD	s1, 01
+				OUTPUT  s1, PA_P2_WON
+				STORE	s1, SP_P1_COUNT					
+				JUMP  main_L0
+				
+
+
+				
+;**************************************************************************************
+; Support functions
+;**************************************************************************************	
+
+;*******
+; Functions to initialize x loc and y loc lookup tables
+;*******				
+
+; ===============================================================================
+; === init_Xloc() - initialize x location lookup table in SP RAM ===
+; === Registers affected: s0, s1                                              ===
+; ===============================================================================
+init_P1X:		LOAD	s0,		SP_LocxVal_P1			; s0 gets base of button translation lookup table
+				LOAD	s1,		SP_P1X0			; s1 gets values for 0x07								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				LOAD	s1,		SP_P1X1				; s1 gets values for 0x00								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				LOAD	s1,		SP_P1X2				; s1 gets values for 0x01								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index				
+				LOAD	s1,		SP_P1X3				; s1 gets values for 0x02								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				LOAD	s1,		SP_P1X4			; s1 gets values for 0x03								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index	
+				LOAD	s1,		SP_P1X5				; s1 gets values for 0x04								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				LOAD	s1,		SP_P1X6				; s1 gets values for 0x05							
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index				
+				LOAD	s1,		SP_P1X7				; s1 gets values for 0x06								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				RETURN
+				
+init_P2X:		LOAD	s0,		SP_LocxVal_P2			; s0 gets base of button translation lookup table
+				LOAD	s1,		SP_P2X0			; s1 gets values for 0x07								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				LOAD	s1,		SP_P2X1				; s1 gets values for 0x00								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				LOAD	s1,		SP_P2X2				; s1 gets values for 0x01								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index				
+				LOAD	s1,		SP_P2X3				; s1 gets values for 0x02								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				LOAD	s1,		SP_P2X4			; s1 gets values for 0x03								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index	
+				LOAD	s1,		SP_P2X5				; s1 gets values for 0x04								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				LOAD	s1,		SP_P2X6				; s1 gets values for 0x05							
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index				
+				LOAD	s1,		SP_P2X7				; s1 gets values for 0x06								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				RETURN				
+				
+init_P1Y:		LOAD	s0,		SP_LocyVal_P1			; s0 gets base of button translation lookup table
+				LOAD	s1,		SP_P1Y0			; s1 gets values for 0x07								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				LOAD	s1,		SP_P1Y1				; s1 gets values for 0x00								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				LOAD	s1,		SP_P1Y2				; s1 gets values for 0x01								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index				
+				LOAD	s1,		SP_P1Y3				; s1 gets values for 0x02								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				LOAD	s1,		SP_P1Y4			; s1 gets values for 0x03								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index	
+				LOAD	s1,		SP_P1Y5				; s1 gets values for 0x04								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				LOAD	s1,		SP_P1Y6				; s1 gets values for 0x05							
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index				
+				LOAD	s1,		SP_P1Y7				; s1 gets values for 0x06								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				RETURN
+				
+init_P2Y:		LOAD	s0,		SP_LocyVal_P2			; s0 gets base of button translation lookup table
+				LOAD	s1,		SP_P2Y0			; s1 gets values for 0x07								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				LOAD	s1,		SP_P2Y1				; s1 gets values for 0x00								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				LOAD	s1,		SP_P2Y2				; s1 gets values for 0x01								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index				
+				LOAD	s1,		SP_P2Y3				; s1 gets values for 0x02								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				LOAD	s1,		SP_P2Y4			; s1 gets values for 0x03								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index	
+				LOAD	s1,		SP_P2Y5				; s1 gets values for 0x04								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				LOAD	s1,		SP_P2Y6				; s1 gets values for 0x05							
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index				
+				LOAD	s1,		SP_P2Y7				; s1 gets values for 0x06								
+				STORE	s1,		(s0)				; store the entry in the table
+				ADD	s0,		01					; increment the table index
+				RETURN			
+
+				
+			
+					
